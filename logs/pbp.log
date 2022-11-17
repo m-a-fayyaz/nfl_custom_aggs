@@ -1,0 +1,7 @@
+utils.pbp_functions:2022-11-16 23:04:25,735:pbp_functions.py:misc_enrich:0.7889sec:595.8537MB:755.2969MB/s
+utils.pbp_functions:2022-11-16 23:04:28,164:pbp_functions.py:fantasy_rec_enrich:0.0219sec:597.3526MB:27276.3744MB/s
+utils.pbp_functions:2022-11-16 23:04:30,553:pbp_functions.py:fantasy_rush_enrich:0.0269sec:599.1512MB:22273.2788MB/s
+utils.pbp_functions:2022-11-16 23:04:32,803:pbp_functions.py:fantasy_pass_enrich:0.0219sec:600.9499MB:27440.6347MB/s
+utils.pbp_functions:2022-11-16 23:04:37,986:pbp_functions.py:fantasy_player_off_agg:0.1127sec:0.1386MB:1.2298MB/s
+utils.pbp_functions:2022-11-16 23:04:38,175:pbp_functions.py:player_rush_agg:0.1875sec:0.069MB:0.368MB/s
+utils.pbp_functions:2022-11-16 23:04:38,432:pbp_functions.py:player_rec_agg:0.2334sec:0.1012MB:0.4336MB/s

@@ -1,0 +1,55 @@
+---
+seasons:
+  - 2022
+  - 2021
+
+rec:
+  rec: 1
+  td: 6
+  yd: 0.1
+  twoPointConv: 2
+
+rush:
+  td: 6
+  yd: 0.1
+  lostFumble: -2
+  twoPointConv: 2
+
+pass:
+  td: 4
+  yd: 0.04
+  int: -1
+  twoPointConv: 2
+
+kick:
+  fg_00_19: 3
+  fg_20_29: 3
+  fg_30_39: 3
+  fg_40_49: 4
+  fg_50_xx: 5
+  fg_miss: -1
+  pat_make: 1
+  pat_miss: -1
+
+def:
+  td: 6
+  sack: 1
+  int: 2
+  forceFum: 1
+  recovFum: 2
+  recovFumTD: 6
+  safety: 2
+  allow_00_00: 10
+  allow_01_06: 7
+  allow_07_13: 4
+  allow_14_20: 1
+  allow_21_27: 0
+  allow_28_34: -1
+  allow_35_xx: -4
+
+spec:
+  td: 6
+  recovFumTD: 6
+  blockKick: 2
+  forceFum: 1
+  recovFum: 1
