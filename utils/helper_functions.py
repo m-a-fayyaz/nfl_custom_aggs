@@ -12,9 +12,7 @@ def level_list():
         list
     """
 
-    level_list = ['season', 'week', 'half', 'quarter']
-
-    return level_list
+    return ['season', 'week', 'half', 'quarter', 'drive']
 
 
 def flatten_dict(d, parent_key='', sep='_'):
@@ -160,7 +158,7 @@ def agg_indexer(level='quarter', add_index=None):
     if level not in level_list():
         raise ValueError('Input for level must be one of the following: '+str(level_list()))
 
-    if not isinstance(add_index, (list, tuple, None)):
+    if not isinstance(add_index, (list, tuple, type(None))):
         raise ValueError('Input for add_index must be a list, tuple, or empty.')
 
     if add_index!=None:
@@ -176,10 +174,12 @@ def agg_indexer(level='quarter', add_index=None):
         pass
     elif level=='week':
         agg_index.extend(['game_id'])
-    elif level =='half':
+    elif level=='half':
         agg_index.extend(['game_id', 'game_half'])
     elif level=='quarter':
         agg_index.extend(['game_id', 'game_half', 'game_quarter'])
+    elif level=='drive':
+        agg_index.extend(['game_id', 'game_half', 'game_quarter', 'fixed_drive'])
     else:
         raise ValueError('Input for level must be one of the following: '+str(level_list()))
 
@@ -211,6 +211,42 @@ def years_error_catcher(years, min_year=1999):
     if len(years) > 0:
         if min(years) < min_year:
             raise ValueError('Data not available before '+str(min_year))
+
+
+def position_list_generator():
+    """
+    Central point to generate position lists for personnel splits
+
+    Returns:
+        two lists
+    """
+    
+    defense_player_columns = []
+    offense_player_columns = []
+
+    for i in range(1,12):
+        defense_string = 'defense_player_' + str(i) + '_id'
+        offense_string = 'offense_player_' + str(i) + '_id'
+        defense_player_columns.extend([defense_string])
+        offense_player_columns.extend([offense_string])
+    
+    return defense_player_columns, offense_player_columns
+
+
+def column_to_front(df: pd.DataFrame, column: str):
+    """
+    Move any column of a dataframe to index 0
+
+    Returns:
+        dataframe
+    """
+
+    temp_cols = df.columns.tolist()
+    index = df.columns.get_loc(column)
+    new_cols = temp_cols[index:index+1] + temp_cols[0:index] + temp_cols[index+1:]
+    df = df[new_cols]
+
+    return df
 
 
 def main():
