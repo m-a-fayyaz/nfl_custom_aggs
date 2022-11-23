@@ -4,6 +4,9 @@ Built on the nfl-data-py module, the nfl_custom_agg functions allow you to impor
 
 ### Usage
 
+Clone this repository to your local desktop:
 
-
+'''bash
+$ git clone https://github.com/m-a-fayyaz/nfl_custom_aggs.git
+'''
 
