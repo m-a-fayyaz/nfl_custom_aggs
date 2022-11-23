@@ -15,7 +15,7 @@ In a python file or Jypyter notebook in the root folder, import the functions in
 from utils import *
 ```
 
-**Enriched PBP Data**
+#### Enriched PBP Data
 ```python
 import_enrich_pbp_data(years, regular=True)
 ```
@@ -27,7 +27,7 @@ years
 regular
 : optional, specify if you only want regular season data
 
-**Custom Offensive Aggregations**
+#### Custom Offensive Aggregations
 ```python
 import_off_agg_data(years, regular=True, level='season')
 ```
