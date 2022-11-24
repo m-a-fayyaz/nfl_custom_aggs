@@ -66,6 +66,35 @@ def misc_enrich(pbp_df):
         pbp_df['rusher_id']
     )
 
+    # Create flags for offensive & defensive touchdowns 
+    pbp_df['offense_td'] = np.where(
+        pbp_df['td_team']==pbp_df['posteam'],
+        1,
+        0
+    )
+    pbp_df['defense_td'] = np.where(
+        pbp_df['td_team']==pbp_df['defteam'],
+        1,
+        0
+    )
+
+    # Add rusher, receiver, & passer (i.e. strip sack) fumble flags
+    pbp_df['passer_fumble'] = np.where(
+        (pbp_df['fumble_lost']==1)&(pbp_df['fumbled_1_player_id']==pbp_df['passer_id'])&(pbp_df['qb_scramble']!=1),
+        1,
+        0
+    )
+    pbp_df['rusher_fumble'] = np.where(
+        (pbp_df['fumble_lost']==1)&(pbp_df['fumbled_1_player_id']==pbp_df['rusher_id']),
+        1,
+        0
+    )
+    pbp_df['receiver_fumble'] = np.where(
+        (pbp_df['fumble_lost']==1)&(pbp_df['fumbled_1_player_id']==pbp_df['receiver_id']),
+        1,
+        0
+    )
+
     end_time = time.time()
     memory = round((pbp_df.memory_usage(deep=True).sum()/1000000),4)
     runtime = round((end_time-start_time),4)
@@ -346,37 +375,46 @@ def player_rush_agg(pbp_df, level='season'):
 
     # Create indexes
     agg_index = agg_indexer(level, add_index=['rusher_id_adjusted'])
-    td_agg_index = agg_indexer(level, add_index=['td_player_id'])
+    # td_agg_index = agg_indexer(level, add_index=['td_player_id'])
 
-    # Aggregate rushing metrics excluding touchdowns
-    filter_df = pbp_df[pbp_df['play_type']=='run']
-    agg_raw_df = pd.DataFrame(
-        filter_df.groupby(by=agg_index) \
-                 .agg({'play_id_unique':'count','rushing_yards':'sum'})
-    )
-    agg_df = agg_raw_df.reset_index() \
-                       .rename(columns={'play_id_unique':'carries'})
+    # Aggregate rushing metrics
+    filter_df = pbp_df[(pbp_df['play_type']=='run')]
+    agg_df = filter_df.groupby(by=agg_index) \
+                      .agg({'play_id_unique':pd.Series.nunique,
+                            'rushing_yards':'sum',
+                            'offense_td':'sum',
+                            'rusher_fumble':'sum'}).reset_index() \
+                      .rename(columns={'play_id_unique':'carries', 
+                                       'offense_td':'rushing_tds',
+                                       'rusher_fumble':'rushing_fumbles',
+                                       'rusher_id_adjusted':'player_id'}).fillna(0)
 
-    # Aggregate rushing touchdowns
-    filter_td_df = filter_df[filter_df['td_player_id'].notnull()]
-    agg_raw_td_df = pd.DataFrame(
-        filter_td_df.groupby(by=td_agg_index) \
-                    .agg({'play_id_unique':'count'})
-    )
-    agg_td_df = agg_raw_td_df.reset_index() \
-                             .rename(columns={'play_id_unique':'rushing_tds', 'td_player_id':'rusher_id_adjusted'})
 
-    # Merge aggregations
-    final_df = agg_df.merge(agg_td_df, how='left', on=agg_index) \
-                     .rename(columns={'rusher_id_adjusted':'player_id'})
+    # # Aggregate rushing metrics excluding touchdowns
+    # filter_df = pbp_df[pbp_df['play_type']=='run']
+    # agg_df = filter_df.groupby(by=agg_index) \
+    #                   .agg({'play_id_unique':pd.Series.nunique,
+    #                         'rushing_yards':'sum'}).reset_index() \
+    #                   .rename(columns={'play_id_unique':'carries'})
+
+    # # Aggregate rushing touchdowns
+    # filter_td_df = filter_df[(filter_df['td_player_id'].notnull())&(pbp_df['td_team']==pbp_df['posteam'])]
+    # agg_td_df = filter_td_df.groupby(by=td_agg_index) \
+    #                         .agg({'play_id_unique':pd.Series.nunique}).reset_index() \
+    #                         .rename(columns={'play_id_unique':'rushing_tds', 
+    #                                          'td_player_id':'rusher_id_adjusted'})
+
+    # # Merge aggregations
+    # final_df = agg_df.merge(agg_td_df, how='left', on=agg_index) \
+    #                  .rename(columns={'rusher_id_adjusted':'player_id'})
 
     end_time = time.time()
-    memory = round((final_df.memory_usage(deep=True).sum()/1000000),4)
+    memory = round((agg_df.memory_usage(deep=True).sum()/1000000),4)
     runtime = round((end_time-start_time),4)
     rate = round((memory/runtime),4)
     logger.info('{}sec:{}MB:{}MB/s'.format(runtime, memory, rate))
 
-    return final_df
+    return agg_df
 
 
 def player_rec_agg(pbp_df, level='season'):
@@ -401,46 +439,105 @@ def player_rec_agg(pbp_df, level='season'):
 
     # Create indexes
     agg_index = agg_indexer(level, add_index=['receiver_id'])
-    td_agg_index = agg_indexer(level, add_index=['td_player_id'])
+    # td_agg_index = agg_indexer(level, add_index=['td_player_id'])
 
-    # Aggregate receiving metrics excluding targets and touchdowns
-    filter_df = pbp_df[(pbp_df['play_type']=='pass')&(pbp_df['complete_pass']==1)]
-    agg_raw_df = pd.DataFrame(
-        filter_df.groupby(by=agg_index) \
-                 .agg({'play_id_unique':'count','receiving_yards':'sum'})
-    )
-    agg_df = agg_raw_df.reset_index().rename(columns={'play_id_unique':'receptions'})
+    # Aggregate rushing metrics
+    filter_df = pbp_df[(pbp_df['play_type']=='pass')]
+    agg_df = filter_df.groupby(by=agg_index) \
+                      .agg({'play_id_unique':pd.Series.nunique,
+                            'complete_pass':'sum',
+                            'receiving_yards':'sum',
+                            'offense_td':'sum',
+                            'receiver_fumble':'sum'}).reset_index() \
+                      .rename(columns={'play_id_unique':'targets', 
+                                       'complete_pass':'receptions',
+                                       'offense_td':'receiving_tds',
+                                       'receiver_fumble':'receiving_fumbles',
+                                       'receiver_id':'player_id'}).fillna(0)
 
-    # Aggregate receiving targets
-    filter_targ_df = pbp_df[(pbp_df['play_type']=='pass')]
-    agg_raw_targ_df = pd.DataFrame(
-        filter_targ_df.groupby(by=agg_index) \
-                      .agg({'play_id_unique':'count'})
-    )
-    agg_targ_df = agg_raw_targ_df.reset_index().rename(columns={'play_id_unique':'targets'})
+    # # Aggregate receiving metrics excluding targets and touchdowns
+    # filter_df = pbp_df[(pbp_df['play_type']=='pass')&(pbp_df['complete_pass']==1)]
+    # agg_df = filter_df.groupby(by=agg_index) \
+    #                   .agg({'play_id_unique':pd.Series.nunique,
+    #                         'receiving_yards':'sum'}).reset_index() \
+    #                   .rename(columns={'play_id_unique':'receptions'})
 
-    # Aggregate receiving toucdowns
-    filter_td_df = filter_df[filter_df['td_player_id'].notnull()]
-    agg_raw_td_df = pd.DataFrame(
-        filter_td_df.groupby(by=td_agg_index) \
-                    .agg({'play_id_unique':'count'})
-    )
-    agg_td_df = agg_raw_td_df.reset_index().rename(columns={'play_id_unique':'receiving_tds', 'td_player_id':'receiver_id'})
+    # # Aggregate receiving targets
+    # filter_targ_df = pbp_df[(pbp_df['play_type']=='pass')]
+    # agg_targ_df = filter_targ_df.groupby(by=agg_index) \
+    #                             .agg({'play_id_unique':pd.Series.nunique}).reset_index() \
+    #                             .rename(columns={'play_id_unique':'targets'})
 
-    # Merge aggregations
-    final_df = agg_targ_df.merge(agg_df, how='left', on=agg_index) \
-                          .merge(agg_td_df, how='left', on=agg_index) \
-                          .fillna({"receptions": 0, "targets": 0}) \
-                          .astype({"receptions": int, "targets": int}) \
-                          .rename(columns={'receiver_id':'player_id'})
+    # # Aggregate receiving toucdowns
+    # filter_td_df = filter_df[(filter_df['td_player_id'].notnull())&(pbp_df['td_team']==pbp_df['posteam'])]
+    # agg_td_df = filter_td_df.groupby(by=td_agg_index) \
+    #                         .agg({'play_id_unique':pd.Series.nunique}).reset_index() \
+    #                         .rename(columns={'play_id_unique':'receiving_tds', 'td_player_id':'receiver_id'})
+
+    # # Merge aggregations
+    # final_df = agg_targ_df.merge(agg_df, how='left', on=agg_index) \
+    #                       .merge(agg_td_df, how='left', on=agg_index) \
+    #                       .fillna({"receptions": 0, "targets": 0}) \
+    #                       .astype({"receptions": int, "targets": int}) \
+    #                       .rename(columns={'receiver_id':'player_id'})
 
     end_time = time.time()
-    memory = round((final_df.memory_usage(deep=True).sum()/1000000),4)
+    memory = round((agg_df.memory_usage(deep=True).sum()/1000000),4)
     runtime = round((end_time-start_time),4)
     rate = round((memory/runtime),4)
     logger.info('{}sec:{}MB:{}MB/s'.format(runtime, memory, rate))
 
-    return final_df
+    return agg_df
+
+
+def player_pass_agg(pbp_df, level='season'):
+    """
+    Aggregates pbp dataframe by key passing metrics at the specified level
+
+    Args:
+        pbp_df (dataframe): pre-loaded play-by-play dataframe
+        level (string): aggregation level (season, week, half, quarter)
+    Returns:
+        dataframe
+    """
+
+    start_time = time.time()
+
+    # Check for valid input
+    if not isinstance(pbp_df, pd.DataFrame):
+        raise ValueError('Input for pbp_df must be a dataframe.')
+
+    if level not in level_list():
+        raise ValueError('Input for level must be one of the following: '+str(level_list()))
+
+    # Create indexes
+    agg_index = agg_indexer(level, add_index=['passer_id'])
+
+    # Aggregate passing metrics
+    filter_df = pbp_df[(pbp_df['play_type']=='pass')]
+    agg_df = filter_df.groupby(by=agg_index) \
+                      .agg({'play_id_unique':pd.Series.nunique,
+                            'passing_yards':'sum',
+                            'air_yards':'sum',
+                            'complete_pass':'sum',
+                            'offense_td':'sum',
+                            'interception':'sum',
+                            'passer_fumble':'sum'}).reset_index() \
+                      .rename(columns={'play_id_unique':'passing_attempts', 
+                                       'complete_pass':'passing_completions',
+                                       'air_yards':'passing_air_yards',
+                                       'offense_td':'passing_tds',
+                                       'interception':'interceptions',
+                                       'passer_id':'player_id',
+                                       'passer_fumble':'sack_fumbles'}).fillna(0)
+    
+    end_time = time.time()
+    memory = round((agg_df.memory_usage(deep=True).sum()/1000000),4)
+    runtime = round((end_time-start_time),4)
+    rate = round((memory/runtime),4)
+    logger.info('{}sec:{}MB:{}MB/s'.format(runtime, memory, rate))
+
+    return agg_df
 
 
 def off_agg_enrich(off_agg_df, level='season'):

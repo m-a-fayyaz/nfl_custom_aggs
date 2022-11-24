@@ -151,6 +151,7 @@ def import_off_agg_data(years, regular=True, level='season', pbp_enrich_df=None)
     off_agg_df = fantasy_player_off_agg(pbp_enrich_df, level=level) \
                     .merge(player_rush_agg(pbp_enrich_df, level=level), how='outer', on=agg_index) \
                     .merge(player_rec_agg(pbp_enrich_df, level=level), how='outer', on=agg_index) \
+                    .merge(player_pass_agg(pbp_enrich_df, level=level), how='outer', on=agg_index) \
                     .merge(players_df, how='left', on=['player_id','season']) \
                     .merge(snap_counter(pbp_enrich_df, level=level), how='outer', on=agg_index)
     
