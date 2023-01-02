@@ -83,10 +83,18 @@ def import_enrich_pbp_data(years, regular=True):
     # Merge and split participation data
     pbp_part_df = participation_expander(pbp_df.merge(part_df, how='left', on=['game_id', 'play_id']))
 
-    print('Adding fantasy data.')
+    print('Adding fantasy, team, and other miscellaneous data.')
 
-    # Apply fantasy and quarter-calc enrichment
-    final_df = fantasy_pass_enrich(fantasy_rush_enrich(fantasy_rec_enrich(misc_enrich(pbp_part_df))))
+    # Import team information
+    team_df = import_team_info() \
+                .rename(columns={'team_abbr':'posteam_adjusted',
+                                 'team_name':'posteam_name',
+                                 'team_conf':'posteam_conference',
+                                 'team_division':'posteam_division'})
+
+    # Add fantasy, team, and other miscellaneous data
+    final_df = fantasy_pass_enrich(fantasy_rush_enrich(fantasy_rec_enrich(misc_enrich(pbp_part_df)))) \
+                .merge(team_df, how='left', on=['posteam_adjusted'])
 
     end_time = time.time()
     memory = round((final_df.memory_usage(deep=True).sum()/1000000),4)
@@ -97,14 +105,15 @@ def import_enrich_pbp_data(years, regular=True):
     return final_df
 
 
-def import_off_agg_data(years, regular=True, level='season', pbp_enrich_df=None):
+def import_off_agg_data(years, regular=True, level='season', by='player', pbp_enrich_df=None):
     """
     Returns an aggregation of several offesnvie metrics at the specfiied level
 
     Args:
         years (list[int], range): years to return enriched pbp df
         regular (boolean): True if restricting pull to regular season
-        level (string): aggregation level (season, week, half, quarter)
+        level (string): aggregation level (season, week, half, quarter, drive)
+        by (string): specify subject to aggregate by (player, team, division, conference, league)
         pbp_enrich_df (dataframe): pass through pre-loaded enriched pbp dataframe, pull from nfl-data-py module if empty
     Returns:
         dataframe
@@ -121,18 +130,22 @@ def import_off_agg_data(years, regular=True, level='season', pbp_enrich_df=None)
     if level not in level_list():
         raise ValueError('Input for level must be one of the following: '+str(level_list()))
 
+    if by not in by_list():
+        raise ValueError('Input for by must be one of the following: '+str(by_list()))
+
     # Pull enriched pbp dataframe
-    if pbp_enrich_df==None:
-        pbp_enrich_df = import_enrich_pbp_data(years=years, regular=regular)
-    elif not isinstance(pbp_enrich_df, pd.DataFrame):
-        raise ValueError('Input for pbp_enrich_df must be a dataframe.')
+    if not isinstance(pbp_enrich_df, pd.DataFrame):
+        if pbp_enrich_df == None:
+            pbp_enrich_df = import_enrich_pbp_data(years=years, regular=regular)
+        else:
+            raise ValueError('Input for pbp_enrich_df must be a dataframe.')
 
     # Pull players data
     players_df_index = [
         'season','player_id','first_name','last_name','player_name','height','weight','years_exp', \
         'draft_club','draft_number','age_sos','position','depth_chart_position','jersey_number'
     ]
-    
+
     players_df = nfl.import_rosters(years)
 
     # Add estimated start-of-season age
@@ -145,17 +158,32 @@ def import_off_agg_data(years, regular=True, level='season', pbp_enrich_df=None)
     print('Aggregating data.')
 
     # Create index for pbp_functions
-    agg_index = agg_indexer(level, add_index=['player_id'])
+    agg_index = agg_indexer(level=level, by=by)
+    if by=='player': 
+        agg_index = agg_index + ['player_id']
 
     # Aggregate dataframe
-    off_agg_df = fantasy_player_off_agg(pbp_enrich_df, level=level) \
-                    .merge(player_rush_agg(pbp_enrich_df, level=level), how='outer', on=agg_index) \
-                    .merge(player_rec_agg(pbp_enrich_df, level=level), how='outer', on=agg_index) \
-                    .merge(player_pass_agg(pbp_enrich_df, level=level), how='outer', on=agg_index) \
-                    .merge(players_df, how='left', on=['player_id','season']) \
-                    .merge(snap_counter(pbp_enrich_df, level=level), how='outer', on=agg_index)
+    off_agg_df = fantasy_off_agg(pbp_enrich_df, level=level, by=by) \
+                    .merge(rush_agg(pbp_enrich_df, level=level, by=by), how='outer', on=agg_index) \
+                    .merge(rec_agg(pbp_enrich_df, level=level, by=by), how='outer', on=agg_index) \
+                    .merge(pass_agg(pbp_enrich_df, level=level, by=by), how='outer', on=agg_index) \
+                    .merge(players_df, how='left', on=['player_id','season'])
     
-    off_agg_df = column_to_front(off_agg_enrich(off_agg_df, level=level), "player_name")
+    if by=='player': 
+        off_agg_df = off_agg_df.merge(snap_counter(pbp_enrich_df, level=level), how='outer', on=agg_index)
+        off_agg_df = off_agg_enrich(off_agg_df, level=level)
+
+    if by=='player': 
+        column = 'player_name'
+    elif by=='team': 
+        column = 'posteam_name'
+    elif by=='division': 
+        column = 'posteam_division'
+    elif by=='conference': 
+        column = 'posteam_division'
+
+    if by != 'league':
+        off_agg_df = column_to_front(off_agg_df, column)
 
     end_time = time.time()
     memory = round((off_agg_df.memory_usage(deep=True).sum()/1000000),4)
@@ -166,46 +194,35 @@ def import_off_agg_data(years, regular=True, level='season', pbp_enrich_df=None)
     return off_agg_df
 
 
-# def import_players_data(years):
-#     """
-#     Returns select columns & ensures distinct entries for a player per season from the nfl_data_py module
+def import_team_info():
+    """
+    Returns a dataframe with a row for each of the 32 teams
 
-#     Args:
-#         years (list[int], range): years to return player data
-#     Returns:
-#         dataframe
-#     """
+    Returns:
+        dataframe
+    """
 
-#     start_time = time.time()
+    start_time = time.time()
 
-#     # Check for valid inputs
-#     years_error_catcher(years=years, min_year=1999)
+    # Pull from nfl_data_py module
+    team_df = nfl.import_team_desc()
 
-#     # Import using nfl_data_py module
-#     players_df = nfl.import_rosters(years=years)
+    team_df = team_df[['team_abbr', 'team_name', 'team_conf', 'team_division']]
 
-#     # Add estimated start-of-season age
-#     players_df['age_sos'] = np.where(players_df['birth_date'].dt.month < 9, \
-#                                      players_df['season'] - players_df['birth_date'].dt.year, \
-#                                      players_df['season'] - players_df['birth_date'].dt.year - 1)
+    team_df = team_df[
+        (team_df['team_name'].str.startswith('San Diego') == False)&
+        (team_df['team_name'].str.startswith('St. Louis') == False)&
+        (team_df['team_name'].str.startswith('Oakland') == False)&
+        (team_df['team_abbr'] != 'LA')
+    ].groupby(by=['team_abbr', 'team_name', 'team_conf', 'team_division']).last().reset_index()
 
-#     # Pull unique rows for the specified index
-#     players_df_index = [
-#         'season','player_id','first_name','last_name','player_name','height','weight','years_exp', \
-#         'draft_club','draft_number','age_sos','position','depth_chart_position','jersey_number'
-#     ]
+    end_time = time.time()
+    memory = round((team_df.memory_usage(deep=True).sum()/1000000),4)
+    runtime = round((end_time-start_time),4)
+    rate = round((memory/runtime),4)
+    logger.info('{}sec:{}MB:{}MB/s'.format(runtime, memory, rate))
 
-#     players_distinct_df = players_df.groupby(by=players_df_index) \
-#                                     .agg({'pfr_id':'count'}).reset_index() \
-#                                     .drop(columns=['pfr_id'])
-
-#     end_time = time.time()
-#     memory = round((players_distinct_df.memory_usage(deep=True).sum()/1000000),4)
-#     runtime = round((end_time-start_time),4)
-#     rate = round((memory/runtime),4)
-#     logger.info('{}sec:{}MB:{}MB/s'.format(runtime, memory, rate))
-
-#     return players_distinct_df
+    return team_df
 
 
 def main():

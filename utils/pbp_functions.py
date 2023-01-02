@@ -17,9 +17,14 @@ file_handler.setFormatter(formatter)
 logger.addHandler(file_handler)
 
 
-def misc_enrich(pbp_df):
+# Read fantasy configuration yaml
+filepath = "fantasy_config.yml"
+env = flatten_dict(read_yaml(filepath))
+
+
+def misc_enrich(pbp_df:pd.DataFrame):
     """
-    Adds columns for quarter & targets to play-by-play dataframe
+    Add additional columns to play-by-play dataframe
 
     Args:
         pbp_df (dataframe): pre-loaded play-by-play dataframe
@@ -33,16 +38,23 @@ def misc_enrich(pbp_df):
     if not isinstance(pbp_df, pd.DataFrame):
         raise ValueError('Input must be a dataframe.')
 
-    # Calculate quarter (0=first quarter... 4=OT quarter)
+    # Calculate quarter (1=first quarter... 5=OT quarter)
     pbp_df['quarter_raw'] = pbp_df.sort_values(by=['game_id','play_id'], ascending=[True,True]) \
                                   .groupby(by=['game_id'])['quarter_end'].cumsum().astype('int')
-
-    # Add one to start at 1 (1=first quarter... 5=OT quarter)
     pbp_df['game_quarter'] = pbp_df['quarter_raw'] + 1
     pbp_df = pbp_df.drop(columns=['quarter_raw'])
 
-    # Add flag for targets
-    pbp_df['target'] = np.where((pbp_df['play_type']=='pass'), 1, 0)
+    # Add adjusted pass & rush attempt columns
+    pbp_df['pass_attempt_adjusted'] = np.where(
+        (pbp_df['play_type']=='pass')&(pbp_df['play_type_nfl']!='PAT2'), 
+        1, 
+        0
+    )
+    pbp_df['rush_attempt_adjusted'] = np.where(
+        (pbp_df['play_type']=='run')&(pbp_df['play_type_nfl']!='PAT2'), 
+        1, 
+        0
+    )
 
     # Add unique play_id
     pbp_df['play_id_unique'] = pbp_df['game_id'] + '_' + pbp_df['play_id'].astype(int).astype(str)
@@ -59,7 +71,7 @@ def misc_enrich(pbp_df):
         pbp_df['defteam']
     )
     
-    # Make passer_id the rusher_id for QB scrambles
+    # Assign passer_id as rusher_id for QB scrambles
     pbp_df['rusher_id_adjusted'] = np.where(
         pbp_df['qb_scramble']==1,
         pbp_df['passer_id'],
@@ -95,6 +107,14 @@ def misc_enrich(pbp_df):
         0
     )
 
+    # Adjust run_gap
+    pbp_df = pbp_df.fillna({'run_gap':'no_run_gap','run_location':'no_run_location'})
+    pbp_df['run_gap_adjusted'] = np.where(
+        pbp_df['run_location']=='middle',
+        'middle',
+        pbp_df['run_gap']
+    )
+
     end_time = time.time()
     memory = round((pbp_df.memory_usage(deep=True).sum()/1000000),4)
     runtime = round((end_time-start_time),4)
@@ -104,7 +124,7 @@ def misc_enrich(pbp_df):
     return pbp_df
 
 
-def fantasy_rec_enrich(pbp_df, rec_rec=1, rec_yd=0.1, rec_td=6, rec_twoPointConv=2, rec_lostFumble=-2):
+def fantasy_rec_enrich(pbp_df:pd.DataFrame, rec_rec=env['rec_rec'], rec_yd=env['rec_yd'], rec_td=env['rec_td'], rec_twoPointConv=env['rec_twoPointConv'], rec_lostFumble=env['rec_lostFumble']):
     """
     Adds fantasy receiving metrics to play-by-play dataframe without any aggregation
 
@@ -150,7 +170,7 @@ def fantasy_rec_enrich(pbp_df, rec_rec=1, rec_yd=0.1, rec_td=6, rec_twoPointConv
         rec_twoPointConv, 
         0
     )
-    pbp_df['fantasy_re _lostFumble_pts'] = np.where(
+    pbp_df['fantasy_rec_lostFumble_pts'] = np.where(
         (pbp_df['fumble_lost']==1)&(pbp_df['fumbled_1_player_id']==pbp_df['receiver_id']),
         rec_lostFumble, 
         0
@@ -161,7 +181,7 @@ def fantasy_rec_enrich(pbp_df, rec_rec=1, rec_yd=0.1, rec_td=6, rec_twoPointConv
                                 pbp_df['fantasy_rec_yd_pts'] + \
                                 pbp_df['fantasy_rec_td_pts'] + \
                                 pbp_df['fantasy_rec_twoPointConv_pts'] + \
-                                pbp_df['fantasy_re _lostFumble_pts']
+                                pbp_df['fantasy_rec_lostFumble_pts']
 
     end_time = time.time()
     memory = round((pbp_df.memory_usage(deep=True).sum()/1000000),4)
@@ -172,16 +192,16 @@ def fantasy_rec_enrich(pbp_df, rec_rec=1, rec_yd=0.1, rec_td=6, rec_twoPointConv
     return pbp_df
 
 
-def fantasy_rush_enrich(pbp_df, rush_yd=0.1, rush_td=6, rush_twoPointConv=2, rush_lostFumble=-2):
+def fantasy_rush_enrich(pbp_df:pd.DataFrame, rush_yd=env['rush_yd'], rush_td=env['rush_td'], rush_twoPointConv=env['rush_twoPointConv'], rush_lostFumble=env['rush_lostFumble']):
     """
     Adds fantasy rushing metrics to play-by-play dataframe without any aggregation
 
     Args:
         pbp_df (dataframe): pre-loaded play-by-play dataframe
-        rush_yd (int): points per rushing yard
-        rush_td (int): points per passing touchdown
-        rush_twoPointConv (int): points for rushing two point conversion
-        rush_lostFumble (int): points per lost fumble (negative or 0)
+        rush_yd (int, float): points per rushing yard
+        rush_td (int, float): points per passing touchdown
+        rush_twoPointConv (int, float): points for rushing two point conversion
+        rush_lostFumble (int, float): points per lost fumble (negative or 0)
     Returns:
         dataframe
     """
@@ -233,7 +253,7 @@ def fantasy_rush_enrich(pbp_df, rush_yd=0.1, rush_td=6, rush_twoPointConv=2, rus
     return pbp_df
 
 
-def fantasy_pass_enrich(pbp_df, pass_yd=0.04, pass_td=4, pass_twoPointConv=2, pass_lostFumble=-2, pass_int=-1):
+def fantasy_pass_enrich(pbp_df:pd.DataFrame, pass_yd=env['pass_yd'], pass_td=env['pass_td'], pass_twoPointConv=env['pass_twoPointConv'], pass_lostFumble=env['pass_lostFumble'], pass_int=env['pass_int']):
     """
     Adds fantasy passing metrics to play-by-play dataframe without any aggregation
 
@@ -300,13 +320,14 @@ def fantasy_pass_enrich(pbp_df, pass_yd=0.04, pass_td=4, pass_twoPointConv=2, pa
     return pbp_df
 
 
-def fantasy_player_off_agg(pbp_fantasy_df, level='season'):
+def fantasy_off_agg(pbp_fantasy_df:pd.DataFrame, level='season', by='player'):
     """
     Aggregates play-by-play fantasy-enriched dataframe by several offensive fantasy metrics at the specified level
 
     Args:
         pbp_fantasy_df (dataframe): pre-loaded play-by-play fantasy-enriched dataframe
-        level (string): aggregation level (season, week, half, quarter)
+        level (string): aggregation level (season, week, half, quarter, drive)
+        by (string): specify subject to aggregate by (player, team, division, conference, league)
     Returns:
         dataframe
     """
@@ -320,27 +341,40 @@ def fantasy_player_off_agg(pbp_fantasy_df, level='season'):
     if level not in level_list():
         raise ValueError('Input for level must be one of the following: '+str(level_list()))
 
-    # Create indexes
-    rush_agg_index = agg_indexer(level, add_index=['rusher_id_adjusted'])
-    rec_agg_index = agg_indexer(level, add_index=['receiver_id'])
-    pass_agg_index = agg_indexer(level, add_index=['passer_id'])
-    agg_index = agg_indexer(level, add_index=['player_id'])
+    if by not in by_list():
+        raise ValueError('Input for by must be one of the following: '+str(by_list()))
 
-    # Aggregate rushing, receiving, and passing metrics
-    rush_fant_agg_df = pbp_fantasy_df.groupby(by=rush_agg_index) \
-                                     .agg({'fantasy_rush_pts':'sum'}).reset_index() \
-                                     .rename(columns={'rusher_id_adjusted':'player_id'})
-    rec_fant_agg_df = pbp_fantasy_df.groupby(by=rec_agg_index) \
-                                    .agg({'fantasy_rec_pts':'sum'}).reset_index() \
-                                    .rename(columns={'receiver_id':'player_id'})
-    pass_fant_agg_df = pbp_fantasy_df.groupby(by=pass_agg_index) \
-                                     .agg({'fantasy_pass_pts':'sum'}).reset_index() \
-                                     .rename(columns={'passer_id':'player_id'})
+    # Set default aggregation index
+    default_index = agg_indexer(level=level, by=by)
 
-    # Merge aggreations
-    final_df = rush_fant_agg_df.merge(rec_fant_agg_df, how='outer', on=agg_index) \
-                               .merge(pass_fant_agg_df, how='outer', on=agg_index) \
-                               .fillna(0)
+    if by=='player':
+        # Add position ids to aggregation indexes
+        rush_agg_index = default_index + ['rusher_id_adjusted']
+        rec_agg_index = default_index + ['receiver_id']
+        pass_agg_index = default_index + ['passer_id']
+        agg_index = default_index + ['player_id']
+
+        # Aggregate by category
+        rush_fant_agg_df = pbp_fantasy_df.groupby(by=rush_agg_index) \
+                                         .agg({'fantasy_rush_pts':'sum'}).reset_index() \
+                                         .rename(columns={'rusher_id_adjusted':'player_id'})
+        rec_fant_agg_df = pbp_fantasy_df.groupby(by=rec_agg_index) \
+                                        .agg({'fantasy_rec_pts':'sum'}).reset_index() \
+                                        .rename(columns={'receiver_id':'player_id'})
+        pass_fant_agg_df = pbp_fantasy_df.groupby(by=pass_agg_index) \
+                                         .agg({'fantasy_pass_pts':'sum'}).reset_index() \
+                                         .rename(columns={'passer_id':'player_id'})
+
+        # Merge categories
+        final_df = rush_fant_agg_df.merge(rec_fant_agg_df, how='outer', on=agg_index) \
+                                   .merge(pass_fant_agg_df, how='outer', on=agg_index) \
+                                   .fillna(0)
+    else:
+        # Aggregate fantasy stats
+        final_df = pbp_fantasy_df.groupby(by=default_index) \
+                                 .agg({'fantasy_rush_pts':'sum',
+                                       'fantasy_rec_pts':'sum',
+                                       'fantasy_pass_pts':'sum'}).reset_index()
 
     final_df['fantasy_total_pts'] = final_df['fantasy_rush_pts'] + final_df['fantasy_rec_pts'] + final_df['fantasy_pass_pts']
 
@@ -353,7 +387,7 @@ def fantasy_player_off_agg(pbp_fantasy_df, level='season'):
     return final_df
 
 
-def player_rush_agg(pbp_df, level='season'):
+def rush_agg(pbp_df:pd.DataFrame, level='season', by='player'):
     """
     Aggregates pbp dataframe by key rushing metrics at the specified level
 
@@ -372,41 +406,28 @@ def player_rush_agg(pbp_df, level='season'):
 
     if level not in level_list():
         raise ValueError('Input for level must be one of the following: '+str(level_list()))
+    
+    if by not in by_list():
+        raise ValueError('Input for by must be one of the following: '+str(by_list()))
 
-    # Create indexes
-    agg_index = agg_indexer(level, add_index=['rusher_id_adjusted'])
-    # td_agg_index = agg_indexer(level, add_index=['td_player_id'])
+    # Create index
+    agg_index = agg_indexer(level=level, by=by)
+    if by=='player': 
+        agg_index.extend(['rusher_id_adjusted'])
 
     # Aggregate rushing metrics
     filter_df = pbp_df[(pbp_df['play_type']=='run')]
     agg_df = filter_df.groupby(by=agg_index) \
-                      .agg({'play_id_unique':pd.Series.nunique,
+                      .agg({'rush_attempt_adjusted':'sum',
                             'rushing_yards':'sum',
                             'offense_td':'sum',
                             'rusher_fumble':'sum'}).reset_index() \
-                      .rename(columns={'play_id_unique':'carries', 
+                      .rename(columns={'rush_attempt_adjusted':'carries', 
                                        'offense_td':'rushing_tds',
-                                       'rusher_fumble':'rushing_fumbles',
-                                       'rusher_id_adjusted':'player_id'}).fillna(0)
-
-
-    # # Aggregate rushing metrics excluding touchdowns
-    # filter_df = pbp_df[pbp_df['play_type']=='run']
-    # agg_df = filter_df.groupby(by=agg_index) \
-    #                   .agg({'play_id_unique':pd.Series.nunique,
-    #                         'rushing_yards':'sum'}).reset_index() \
-    #                   .rename(columns={'play_id_unique':'carries'})
-
-    # # Aggregate rushing touchdowns
-    # filter_td_df = filter_df[(filter_df['td_player_id'].notnull())&(pbp_df['td_team']==pbp_df['posteam'])]
-    # agg_td_df = filter_td_df.groupby(by=td_agg_index) \
-    #                         .agg({'play_id_unique':pd.Series.nunique}).reset_index() \
-    #                         .rename(columns={'play_id_unique':'rushing_tds', 
-    #                                          'td_player_id':'rusher_id_adjusted'})
-
-    # # Merge aggregations
-    # final_df = agg_df.merge(agg_td_df, how='left', on=agg_index) \
-    #                  .rename(columns={'rusher_id_adjusted':'player_id'})
+                                       'rusher_fumble':'rushing_fumbles'}).fillna(0)
+    
+    if by=='player': 
+        agg_df = agg_df.rename(columns={'rusher_id_adjusted':'player_id'})
 
     end_time = time.time()
     memory = round((agg_df.memory_usage(deep=True).sum()/1000000),4)
@@ -417,7 +438,7 @@ def player_rush_agg(pbp_df, level='season'):
     return agg_df
 
 
-def player_rec_agg(pbp_df, level='season'):
+def rec_agg(pbp_df:pd.DataFrame, level='season', by='player'):
     """
     Aggregates pbp dataframe by key receiving metrics at the specified level
 
@@ -436,50 +457,32 @@ def player_rec_agg(pbp_df, level='season'):
 
     if level not in level_list():
         raise ValueError('Input for level must be one of the following: '+str(level_list()))
+    
+    if by not in by_list():
+        raise ValueError('Input for by must be one of the following: '+str(by_list()))
 
-    # Create indexes
-    agg_index = agg_indexer(level, add_index=['receiver_id'])
-    # td_agg_index = agg_indexer(level, add_index=['td_player_id'])
+    # Create index
+    agg_index = agg_indexer(level=level, by=by)
+    if by=='player': 
+        agg_index.extend(['receiver_id'])
 
     # Aggregate rushing metrics
     filter_df = pbp_df[(pbp_df['play_type']=='pass')]
     agg_df = filter_df.groupby(by=agg_index) \
-                      .agg({'play_id_unique':pd.Series.nunique,
+                      .agg({'pass_attempt_adjusted':'sum',
                             'complete_pass':'sum',
                             'receiving_yards':'sum',
+                            'yards_after_catch':'sum',
                             'offense_td':'sum',
                             'receiver_fumble':'sum'}).reset_index() \
-                      .rename(columns={'play_id_unique':'targets', 
+                      .rename(columns={'pass_attempt_adjusted':'targets', 
                                        'complete_pass':'receptions',
                                        'offense_td':'receiving_tds',
                                        'receiver_fumble':'receiving_fumbles',
-                                       'receiver_id':'player_id'}).fillna(0)
-
-    # # Aggregate receiving metrics excluding targets and touchdowns
-    # filter_df = pbp_df[(pbp_df['play_type']=='pass')&(pbp_df['complete_pass']==1)]
-    # agg_df = filter_df.groupby(by=agg_index) \
-    #                   .agg({'play_id_unique':pd.Series.nunique,
-    #                         'receiving_yards':'sum'}).reset_index() \
-    #                   .rename(columns={'play_id_unique':'receptions'})
-
-    # # Aggregate receiving targets
-    # filter_targ_df = pbp_df[(pbp_df['play_type']=='pass')]
-    # agg_targ_df = filter_targ_df.groupby(by=agg_index) \
-    #                             .agg({'play_id_unique':pd.Series.nunique}).reset_index() \
-    #                             .rename(columns={'play_id_unique':'targets'})
-
-    # # Aggregate receiving toucdowns
-    # filter_td_df = filter_df[(filter_df['td_player_id'].notnull())&(pbp_df['td_team']==pbp_df['posteam'])]
-    # agg_td_df = filter_td_df.groupby(by=td_agg_index) \
-    #                         .agg({'play_id_unique':pd.Series.nunique}).reset_index() \
-    #                         .rename(columns={'play_id_unique':'receiving_tds', 'td_player_id':'receiver_id'})
-
-    # # Merge aggregations
-    # final_df = agg_targ_df.merge(agg_df, how='left', on=agg_index) \
-    #                       .merge(agg_td_df, how='left', on=agg_index) \
-    #                       .fillna({"receptions": 0, "targets": 0}) \
-    #                       .astype({"receptions": int, "targets": int}) \
-    #                       .rename(columns={'receiver_id':'player_id'})
+                                       'yards_after_catch':'receiving_yards_after_catch'}).fillna(0)
+    
+    if by=='player': 
+        agg_df = agg_df.rename(columns={'receiver_id':'player_id'})
 
     end_time = time.time()
     memory = round((agg_df.memory_usage(deep=True).sum()/1000000),4)
@@ -490,7 +493,7 @@ def player_rec_agg(pbp_df, level='season'):
     return agg_df
 
 
-def player_pass_agg(pbp_df, level='season'):
+def pass_agg(pbp_df:pd.DataFrame, level='season', by='player'):
     """
     Aggregates pbp dataframe by key passing metrics at the specified level
 
@@ -509,27 +512,34 @@ def player_pass_agg(pbp_df, level='season'):
 
     if level not in level_list():
         raise ValueError('Input for level must be one of the following: '+str(level_list()))
+    
+    if by not in by_list():
+        raise ValueError('Input for by must be one of the following: '+str(by_list()))
 
-    # Create indexes
-    agg_index = agg_indexer(level, add_index=['passer_id'])
+    # Create index
+    agg_index = agg_indexer(level=level, by=by)
+    if by=='player': 
+        agg_index.extend(['passer_id'])
 
     # Aggregate passing metrics
     filter_df = pbp_df[(pbp_df['play_type']=='pass')]
     agg_df = filter_df.groupby(by=agg_index) \
-                      .agg({'play_id_unique':pd.Series.nunique,
+                      .agg({'pass_attempt_adjusted':'sum',
                             'passing_yards':'sum',
                             'air_yards':'sum',
                             'complete_pass':'sum',
                             'offense_td':'sum',
                             'interception':'sum',
                             'passer_fumble':'sum'}).reset_index() \
-                      .rename(columns={'play_id_unique':'passing_attempts', 
+                      .rename(columns={'pass_attempt_adjusted':'passing_attempts', 
                                        'complete_pass':'passing_completions',
                                        'air_yards':'passing_air_yards',
                                        'offense_td':'passing_tds',
                                        'interception':'interceptions',
-                                       'passer_id':'player_id',
                                        'passer_fumble':'sack_fumbles'}).fillna(0)
+    
+    if by=='player': 
+        agg_df = agg_df.rename(columns={'passer_id':'player_id'})
     
     end_time = time.time()
     memory = round((agg_df.memory_usage(deep=True).sum()/1000000),4)
@@ -807,36 +817,69 @@ def snap_counter(pbp_expand_df: pd.DataFrame, level='season'):
     return offense_join_df
 
 
-def complete_agg(pbp_fantasy_df, level='season'):
+def rush_dir_agg(pbp_df:pd.DataFrame, level='season', by='player'):
     """
-    Applies all offensive aggregations to a fasntasy_enriched play-by-play dataframe
+    Aggregates pbp dataframe by key rushing metrics at the specified level
 
     Args:
-        pbp_fantasy_df (dataframe): pre-loaded fantasy-enriched play-by-play dataframe
+        pbp_df (dataframe): pre-loaded play-by-play dataframe
+        level (string): aggregation level (season, week, half, quarter)
     Returns:
         dataframe
     """
 
     start_time = time.time()
 
-    # Check for valid input
-    if not isinstance(pbp_fantasy_df, pd.DataFrame):
-        raise ValueError('Input for pbp_fantasy_df must be a dataframe.')
+    # Check for valid inputs
+    if not isinstance(pbp_df, pd.DataFrame):
+        raise ValueError('Input for pbp_df must be a dataframe.')
 
-    # Create index for pbp_functions
-    agg_index = agg_indexer(level, add_index=['player_id'])
+    if level not in level_list():
+        raise ValueError('Input for level must be one of the following: '+str(level_list()))
+    
+    if by not in by_list():
+        raise ValueError('Input for by must be one of the following: '+str(by_list()))
 
-    final_df = fantasy_player_off_agg(pbp_fantasy_df).merge(player_rush_agg(pbp_fantasy_df), how='outer', on=agg_index) \
-                                                     .merge(player_rec_agg(pbp_fantasy_df), how='outer', on=agg_index)
+    # # Create indexes
+    # agg_index = agg_indexer(level, add_index=['rusher_id_adjusted', 'defenders_in_box'])
+
+    # # Aggregate rushing metrics
+    # filter_df = pbp_df[(pbp_df['play_type']=='run')]
+    # agg_df = filter_df.groupby(by=agg_index) \
+    #                   .agg({'rush_attempt_adjusted':'sum',
+    #                         'rushing_yards':'sum',
+    #                         'offense_td':'sum',
+    #                         'rusher_fumble':'sum'}).reset_index() \
+    #                   .rename(columns={'rush_attempt_adjusted':'carries', 
+    #                                    'offense_td':'rushing_tds',
+    #                                    'rusher_fumble':'rushing_fumbles',
+    #                                    'rusher_id_adjusted':'player_id'}).fillna(0)
+    
+    # Create indexes
+    agg_index = agg_indexer(level=level, add_index=['run_gap_adjusted', 'run_location'])
+    if by=='player': agg_index = agg_index + ['rusher_id_adjusted']
+
+    # Aggregate rushing metrics
+    filter_df = pbp_df[(pbp_df['play_type']=='run')]
+    agg_df = filter_df.groupby(by=agg_index) \
+                      .agg({'rush_attempt_adjusted':'sum',
+                            'rushing_yards':'sum',
+                            'offense_td':'sum',
+                            'rusher_fumble':'sum'}).reset_index() \
+                      .rename(columns={'rush_attempt_adjusted':'carries', 
+                                       'offense_td':'rushing_tds',
+                                       'rusher_fumble':'rushing_fumbles'}).fillna(0)
+    
+    if by=='player': agg_df = agg_df.rename(columns={'rusher_id_adjusted':'player_id'})
 
     end_time = time.time()
-    memory = round((final_df.memory_usage(deep=True).sum()/1000000),4)
+    memory = round((agg_df.memory_usage(deep=True).sum()/1000000),4)
     runtime = round((end_time-start_time),4)
     rate = round((memory/runtime),4)
     logger.info('{}sec:{}MB:{}MB/s'.format(runtime, memory, rate))
 
-    return final_df
-
+    return agg_df
+    
 
 def main():
     print("PBP data functions are defined.")

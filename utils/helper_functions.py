@@ -15,6 +15,17 @@ def level_list():
     return ['season', 'week', 'half', 'quarter', 'drive']
 
 
+def by_list():
+    """
+    Central point to control possible subjects of aggregation
+
+    Returns:
+        list
+    """
+
+    return ['player', 'team', 'division', 'conference', 'league']
+
+
 def flatten_dict(d, parent_key='', sep='_'):
     """
     Flatten nested dicitonary into a single layer of keys
@@ -143,12 +154,13 @@ def column_binner(df, column, start, end, step):
     return df
 
 
-def agg_indexer(level='quarter', add_index=None):
+def agg_indexer(level='season', by='player', add_index=None):
     """
     Returns the index columns for a pbp dataframe at the specified level of aggregation
 
     Args:
-        level (string): aggregation level (season, week, half, quarter)
+        level (string): aggregation level (season, week, half, quarter, drive)
+        by (string): specify subject to aggregate by (player, team, division, conference, league)
         add_index (list[string]): extra columns to add to index
     Returns:
         list
@@ -157,6 +169,9 @@ def agg_indexer(level='quarter', add_index=None):
     # Check for valid inputs
     if level not in level_list():
         raise ValueError('Input for level must be one of the following: '+str(level_list()))
+    
+    if by not in by_list():
+        raise ValueError('Input for by must be one of the following: '+str(by_list()))
 
     if not isinstance(add_index, (list, tuple, type(None))):
         raise ValueError('Input for add_index must be a list, tuple, or empty.')
@@ -182,11 +197,68 @@ def agg_indexer(level='quarter', add_index=None):
         agg_index.extend(['game_id', 'game_half', 'game_quarter', 'fixed_drive'])
     else:
         raise ValueError('Input for level must be one of the following: '+str(level_list()))
+    
+    # Extend for by
+    # No index needed for league
+    # Indexes for player aggs are added manually case-to-case
+    if by=='team':
+        agg_index.extend(['posteam_name'])
+    elif by=='division':
+        agg_index.extend(['posteam_division'])
+    elif by=='conference':
+        agg_index.extend(['posteam_conference']) 
 
     # Extend for add_index
     if add_index!=None: agg_index.extend(add_index)
 
     return agg_index
+
+
+
+# def agg_indexer(level='quarter', add_index=None):
+#     """
+#     Returns the index columns for a pbp dataframe at the specified level of aggregation
+
+#     Args:
+#         level (string): aggregation level (season, week, half, quarter)
+#         add_index (list[string]): extra columns to add to index
+#     Returns:
+#         list
+#     """
+
+#     # Check for valid inputs
+#     if level not in level_list():
+#         raise ValueError('Input for level must be one of the following: '+str(level_list()))
+
+#     if not isinstance(add_index, (list, tuple, type(None))):
+#         raise ValueError('Input for add_index must be a list, tuple, or empty.')
+
+#     if add_index!=None:
+#         for x in add_index:
+#             if not isinstance(x, str):
+#                 raise ValueError('Invalid input \''+str(x)+'\': inputs for add_index must be strings')
+
+#     # Initialize index
+#     agg_index = ['season']
+
+#     # Extend for level
+#     if level=='season':
+#         pass
+#     elif level=='week':
+#         agg_index.extend(['game_id'])
+#     elif level=='half':
+#         agg_index.extend(['game_id', 'game_half'])
+#     elif level=='quarter':
+#         agg_index.extend(['game_id', 'game_half', 'game_quarter'])
+#     elif level=='drive':
+#         agg_index.extend(['game_id', 'game_half', 'game_quarter', 'fixed_drive'])
+#     else:
+#         raise ValueError('Input for level must be one of the following: '+str(level_list()))
+
+#     # Extend for add_index
+#     if add_index!=None: agg_index.extend(add_index)
+
+#     return agg_index
 
 
 def years_error_catcher(years, min_year=1999):
